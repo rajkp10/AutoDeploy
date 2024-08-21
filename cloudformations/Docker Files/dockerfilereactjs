@@ -1,0 +1,11 @@
+FROM node:lts-alpine as BUILD
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+FROM nginx:stable-alpine
+RUN rm -rf /usr/share/nginx/html/*
+COPY --from=BUILD /app/build /usr/share/nginx/html
+ENV PORT 80
+CMD ["nginx", "-g", "daemon off;"]

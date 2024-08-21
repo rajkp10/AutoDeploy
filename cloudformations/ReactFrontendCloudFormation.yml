@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  EC2Name:
+    Type: String
+    Description: The EC2 Name
+  SubnetID:
+    Type: String
+    Description: The Subnet ID
+  SecurityGroupID:
+    Type: String
+    Description: The Security Group ID
+  GitUrl:
+    Type: String
+    Description: The Git URL
+  RepoLocation:
+    Type: String
+    Description: The Repository Name
+  DockerFile:
+    Type: String
+    Description: The Dockerfile content
+
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0ba9883b710b05ac6 # Replace with the actual AMI ID for Amazon Linux 2023
+      KeyName: project-ec2-key-pair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId: !Ref SubnetID
+          GroupSet:
+            - !Ref SecurityGroupID
+      Tags:
+        - Key: Name
+          Value: !Ref EC2Name
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          cd /home/ec2-user
+          sudo yum update -y
+          # Install Git
+          sudo yum install -y git
+          # Set Git timeout
+          git config --global http.lowSpeedLimit 0
+          git config --global http.lowSpeedTime 999999
+          # clone git url
+          sudo git clone ${GitUrl}
+          # Install Docker
+          sudo yum install docker -y
+          # service docker start
+          sudo systemctl start docker
+          # enable docker service
+          sudo systemctl enable docker
+          # Go to working dir
+          cd ${RepoLocation}
+          # Copy dockerfile
+          echo "${DockerFile}" > Dockerfile
+          echo "dockerfile created"
+          # Build image
+          sudo docker build -t react-image .
+          # if [ $? -ne 0 ]; then
+          #   echo "Docker build failed"
+          #   exit 1
+          # fi
+          echo "docker image built"
+          # Run the container
+          sudo docker run -d -p 80:80 react-image
+          echo "docker container is running"
+
+Outputs:
+  EC2InstanceId:
+    Description: The ID of the EC2 Instance
+    Value: !Ref MyEC2Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-MyEC2InstanceId"

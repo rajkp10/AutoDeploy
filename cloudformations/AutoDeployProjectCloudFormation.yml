@@ -1,0 +1,519 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  ProjectVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/20
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: ProjectVPC
+
+  ProjectSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: ProjectSubnet
+
+  ProjectInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ProjectInternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ProjectVPC
+      InternetGatewayId: !Ref ProjectInternetGateway
+
+  ProjectRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProjectVPC
+      Tags:
+        - Key: Name
+          Value: ProjectRouteTable
+
+  ProjectRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProjectRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ProjectInternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectSubnet
+      RouteTableId: !Ref ProjectRouteTable
+
+  ProjectSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ProjectSecurityGroup
+      GroupDescription: Allow SSH, HTTP, and HTTPS traffic
+      VpcId: !Ref ProjectVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ProjectSecurityGroup
+
+  AppDataTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: "AppData"
+      AttributeDefinitions:
+        - AttributeName: "stackName"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "stackName"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  PublishEmailTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      DisplayName: "Auto Deploy Publish Email CF"
+      TopicName: "AutoDeployCF"
+
+  CheckStatusQueue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: "CheckStatusCF.fifo"
+      FifoQueue: true
+      VisibilityTimeout: 43200
+      MessageRetentionPeriod: 60
+      ContentBasedDeduplication: true
+
+  AWSSDKLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: AWSSDK
+      Content:
+        S3Bucket: "resources-5409"
+        S3Key: "nodejs.zip"
+      CompatibleRuntimes:
+        - "nodejs20.x"
+
+  DeployNodeJsLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeployNodeJsCF
+      Handler: index.handler
+      Runtime: "nodejs20.x"
+      Timeout: 300
+      Role: "arn:aws:iam::728868923072:role/LabRole"
+      Code:
+        S3Bucket: "resources-5409"
+        S3Key: "DeployNodeJs.zip"
+      Environment:
+        Variables:
+          SECURITY_GROUP: !Ref ProjectSecurityGroup
+          SUBNET_ID: !Ref ProjectSubnet
+          TOPIC_ARN: !Ref PublishEmailTopic
+          QUEUE_URL: !Ref CheckStatusQueue
+          BUCKET_NAME: "resources-5409"
+      Layers:
+        - !Ref AWSSDKLayer
+
+  DeployReactJsLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeployReactJsCF
+      Handler: index.handler
+      Runtime: "nodejs20.x"
+      Timeout: 300
+      Role: "arn:aws:iam::728868923072:role/LabRole"
+      Code:
+        S3Bucket: "resources-5409"
+        S3Key: "DeployReactJs.zip"
+      Environment:
+        Variables:
+          SECURITY_GROUP: !Ref ProjectSecurityGroup
+          SUBNET_ID: !Ref ProjectSubnet
+          TOPIC_ARN: !Ref PublishEmailTopic
+          QUEUE_URL: !Ref CheckStatusQueue
+          BUCKET_NAME: "resources-5409"
+      Layers:
+        - !Ref AWSSDKLayer
+
+  CheckFormationStatusLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CheckFormationStatusCF
+      Handler: index.handler
+      Runtime: "nodejs20.x"
+      Timeout: 300
+      Role: "arn:aws:iam::728868923072:role/LabRole"
+      Code:
+        S3Bucket: "resources-5409"
+        S3Key: "CheckFormationStatus.zip"
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref PublishEmailTopic
+          QUEUE_URL: !Ref CheckStatusQueue
+          TABLE_NAME: !Ref AppDataTable
+      Layers:
+        - !Ref AWSSDKLayer
+
+  GetAllStacksLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: GetAllStacksCF
+      Handler: index.handler
+      Runtime: "nodejs20.x"
+      Timeout: 10
+      Role: "arn:aws:iam::728868923072:role/LabRole"
+      Code:
+        S3Bucket: "resources-5409"
+        S3Key: "GetAllStacks.zip"
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref AppDataTable
+      Layers:
+        - !Ref AWSSDKLayer
+
+  LambdaSQSTrigger:
+    Type: "AWS::Lambda::EventSourceMapping"
+    Properties:
+      BatchSize: 1
+      EventSourceArn: !GetAtt CheckStatusQueue.Arn
+      FunctionName: !GetAtt CheckFormationStatusLambdaFunction.Arn
+      Enabled: true
+
+  ApiGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "AutoDeployApi"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  DeployNodeJsLambdaResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: node
+      RestApiId: !Ref ApiGateway
+
+  DeployReactJsLambdaResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: react
+      RestApiId: !Ref ApiGateway
+
+  GetAllStacksLambdaResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: stacks
+      RestApiId: !Ref ApiGateway
+
+  DeployNodeJsLambdaPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref DeployNodeJsLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Credentials: arn:aws:iam::728868923072:role/LabRole
+        IntegrationHttpMethod: POST
+        Type: AWS
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeployNodeJsLambdaFunction.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: ""
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Content-Type: true
+          ResponseModels:
+            application/json: "Empty"
+
+  DeployNodeJsLambdaOptionsMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref DeployNodeJsLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+          ResponseModels:
+            application/json: "Empty"
+
+  DeployReactJsLambdaPostMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref DeployReactJsLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Credentials: arn:aws:iam::728868923072:role/LabRole
+        IntegrationHttpMethod: POST
+        Type: AWS
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeployReactJsLambdaFunction.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: ""
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Content-Type: true
+          ResponseModels:
+            application/json: "Empty"
+
+  DeployReactJsLambdaOptionsMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref DeployReactJsLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+          ResponseModels:
+            application/json: "Empty"
+
+  GetAllStacksLambdaGetMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref GetAllStacksLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Credentials: arn:aws:iam::728868923072:role/LabRole
+        IntegrationHttpMethod: POST
+        Type: AWS
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAllStacksLambdaFunction.Arn}/invocations"
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: ""
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  GetAllStacksLambdaOptionsMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref GetAllStacksLambdaResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+          ResponseModels:
+            application/json: "Empty"
+
+  DeployNodeJsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DeployNodeJsLambdaFunction
+      Principal: apigateway.amazonaws.com
+
+  DeployReactJsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DeployReactJsLambdaFunction
+      Principal: apigateway.amazonaws.com
+
+  GetAllStacksLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GetAllStacksLambdaFunction
+      Principal: apigateway.amazonaws.com
+
+  ApiDeployment:
+    Type: "AWS::ApiGateway::Deployment"
+    DependsOn:
+      - DeployNodeJsLambdaOptionsMethod
+      - DeployReactJsLambdaOptionsMethod
+      - GetAllStacksLambdaOptionsMethod
+      - DeployNodeJsLambdaPostMethod
+      - DeployReactJsLambdaPostMethod
+      - GetAllStacksLambdaGetMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: "dev"
+
+  AutoDeployFrontendEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0ba9883b710b05ac6
+      KeyName: project-ec2-key-pair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId: !Ref ProjectSubnet
+          GroupSet:
+            - !Ref ProjectSecurityGroup
+      Tags:
+        - Key: Name
+          Value: AutoDeployFrontend
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          cd /home/ec2-user
+          sudo yum update -y
+          # Install Docker
+          sudo yum install docker -y
+          # service docker start
+          sudo systemctl start docker
+          # enable docker service
+          sudo systemctl enable docker
+          # Pull the image
+          sudo docker pull rajkp10/autodeployfrontend:latest
+          echo "docker image pulled"
+          # Run the container
+          sudo docker run -d -p 80:3000 -e VITE_APP_BASE_URL=https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev rajkp10/autodeployfrontend
+          echo "docker container is running"
+
+Outputs:
+  VPCId:
+    Description: The ID of the VPC
+    Value: !Ref ProjectVPC
+    Export:
+      Name: VpcId
+
+  SubnetId:
+    Description: The ID of the Subnet
+    Value: !Ref ProjectSubnet
+    Export:
+      Name: SubnetId
+
+  SecurityGroupId:
+    Description: The ID of the Security Group
+    Value: !Ref ProjectSecurityGroup
+    Export:
+      Name: SecurityGroupId
+
+  InternetGatewayId:
+    Description: The ID of the Internet Gateway
+    Value: !Ref ProjectInternetGateway
+    Export:
+      Name: InternetGatewayId
+
+  RouteTableId:
+    Description: The ID of the Route Table
+    Value: !Ref ProjectRouteTable
+    Export:
+      Name: RouteTableId
+
+  SNSTopicArn:
+    Description: The ARN of SNS Topic
+    Value: !Ref PublishEmailTopic
+    Export:
+      Name: SNSTopicArn
+
+  SQSQueueUrl:
+    Description: The URL of SQS Queue
+    Value: !Ref CheckStatusQueue
+    Export:
+      Name: SQSTopicUrl
+
+  LayerId:
+    Description: The ID of the Layer
+    Value: !Ref AWSSDKLayer
+    Export:
+      Name: LayerId
+
+  ApiUrl:
+    Description: URL of API Gateway
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev/deploy"
+
+  EC2InstanceId:
+    Description: The ID of the AutoDeploy Frontend EC2 Instance
+    Value: !Ref AutoDeployFrontendEC2Instance
+    Export:
+      Name: FrontendEC2InstanceId
