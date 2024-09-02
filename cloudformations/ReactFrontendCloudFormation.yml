@@ -1,11 +1,17 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Parameters:
+  ProjectVpc:
+    Type: String
+    Description: The VPC
   EC2Name:
     Type: String
     Description: The EC2 Name
-  SubnetID:
+  Subnet1ID:
     Type: String
-    Description: The Subnet ID
+    Description: The Subnet 1 ID
+  Subnet2ID:
+    Type: String
+    Description: The Subnet 2 ID
   SecurityGroupID:
     Type: String
     Description: The Security Group ID
@@ -20,7 +26,7 @@ Parameters:
     Description: The Dockerfile content
 
 Resources:
-  MyEC2Instance:
+  ReactEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
@@ -29,7 +35,7 @@ Resources:
       NetworkInterfaces:
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
-          SubnetId: !Ref SubnetID
+          SubnetId: !Ref Subnet2ID
           GroupSet:
             - !Ref SecurityGroupID
       Tags:
@@ -69,9 +75,52 @@ Resources:
           sudo docker run -d -p 80:80 react-image
           echo "docker container is running"
 
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${RepoLocation}"
+      VpcId: !Ref ProjectVpc
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "80"
+      HealthCheckPath: "/"
+      Matcher:
+        HttpCode: "200"
+      Targets:
+        - Id: !Ref ReactEC2Instance
+      Tags:
+        - Key: Name
+          Value: AutoDeployTargetGroup
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${RepoLocation}"
+      Scheme: internet-facing
+      Subnets:
+        - !Ref Subnet1ID
+        - !Ref Subnet2ID
+      SecurityGroups:
+        - !Ref SecurityGroupID
+      Tags:
+        - Key: Name
+          Value: !Sub "${EC2Name}-LoadBalancer"
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
 Outputs:
   EC2InstanceId:
     Description: The ID of the EC2 Instance
-    Value: !Ref MyEC2Instance
+    Value: !Ref ReactEC2Instance
     Export:
-      Name: !Sub "${AWS::StackName}-MyEC2InstanceId"
+      Name: !Sub "${AWS::StackName}-ReactEC2InstanceId"

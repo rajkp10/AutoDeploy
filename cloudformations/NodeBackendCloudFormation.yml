@@ -1,11 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
+  ProjectVpc:
+    Type: String
+    Description: The VPC
   EC2Name:
     Type: String
     Description: The EC2 Name
-  SubnetID:
+  Subnet1ID:
     Type: String
-    Description: The Subnet ID
+    Description: The Subnet 1 ID
+  Subnet2ID:
+    Type: String
+    Description: The Subnet 2 ID
   SecurityGroupID:
     Type: String
     Description: The Security Group ID
@@ -30,12 +36,12 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
-      ImageId: ami-0ba9883b710b05ac6
+      ImageId: ami-0ba9883b710b05ac6 # Replace with the actual AMI ID for Amazon Linux 2023
       KeyName: project-ec2-key-pair
       NetworkInterfaces:
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
-          SubnetId: !Ref SubnetID
+          SubnetId: !Ref Subnet2ID
           GroupSet:
             - !Ref SecurityGroupID
       Tags:
@@ -73,6 +79,49 @@ Resources:
           # Run the container
           sudo docker run --env-file config.env -d -p 80:${Port} node-image
           echo "docker container is running"
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${RepoLocation}"
+      VpcId: !Ref ProjectVpc
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "80"
+      HealthCheckPath: "/"
+      Matcher:
+        HttpCode: "200"
+      Targets:
+        - Id: !Ref NodeEC2Instance
+      Tags:
+        - Key: Name
+          Value: AutoDeployTargetGroup
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${RepoLocation}"
+      Scheme: internet-facing
+      Subnets:
+        - !Ref Subnet1ID
+        - !Ref Subnet2ID
+      SecurityGroups:
+        - !Ref SecurityGroupID
+      Tags:
+        - Key: Name
+          Value: !Sub "${EC2Name}-LoadBalancer"
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
           
 Outputs:
   EC2InstanceId:

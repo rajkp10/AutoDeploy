@@ -10,7 +10,7 @@ Resources:
         - Key: Name
           Value: ProjectVPC
 
-  ProjectSubnet:
+  ProjectSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref ProjectVPC
@@ -18,7 +18,17 @@ Resources:
       AvailabilityZone: us-east-1a
       Tags:
         - Key: Name
-          Value: ProjectSubnet
+          Value: ProjectSubnet1
+
+  ProjectSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: ProjectSubnet2
 
   ProjectInternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -48,10 +58,16 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref ProjectInternetGateway
 
-  SubnetRouteTableAssociation:
+  SubnetRouteTableAssociation1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref ProjectSubnet
+      SubnetId: !Ref ProjectSubnet1
+      RouteTableId: !Ref ProjectRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectSubnet2
       RouteTableId: !Ref ProjectRouteTable
 
   ProjectSecurityGroup:
@@ -129,8 +145,10 @@ Resources:
         S3Key: "DeployNodeJs.zip"
       Environment:
         Variables:
+          PROJECT_VPC: !Ref ProjectVPC
           SECURITY_GROUP: !Ref ProjectSecurityGroup
-          SUBNET_ID: !Ref ProjectSubnet
+          SUBNET1_ID: !Ref ProjectSubnet1
+          SUBNET2_ID: !Ref ProjectSubnet2
           TOPIC_ARN: !Ref PublishEmailTopic
           QUEUE_URL: !Ref CheckStatusQueue
           BUCKET_NAME: "resources-5409"
@@ -150,8 +168,10 @@ Resources:
         S3Key: "DeployReactJs.zip"
       Environment:
         Variables:
+          PROJECT_VPC: !Ref ProjectVPC
           SECURITY_GROUP: !Ref ProjectSecurityGroup
-          SUBNET_ID: !Ref ProjectSubnet
+          SUBNET1_ID: !Ref ProjectSubnet1
+          SUBNET2_ID: !Ref ProjectSubnet2
           TOPIC_ARN: !Ref PublishEmailTopic
           QUEUE_URL: !Ref CheckStatusQueue
           BUCKET_NAME: "resources-5409"
@@ -435,7 +455,7 @@ Resources:
       NetworkInterfaces:
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
-          SubnetId: !Ref ProjectSubnet
+          SubnetId: !Ref ProjectSubnet1
           GroupSet:
             - !Ref ProjectSecurityGroup
       Tags:
@@ -459,6 +479,50 @@ Resources:
           sudo docker run -d -p 80:3000 -e VITE_APP_BASE_URL=https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev rajkp10/autodeployfrontend
           echo "docker container is running"
 
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: AutoDeployTargetGroup
+      VpcId: !Ref ProjectVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "80"
+      HealthCheckPath: "/"
+      Matcher:
+        HttpCode: "200"
+      Targets:
+        - Id: !Ref AutoDeployFrontendEC2Instance
+      Tags:
+        - Key: Name
+          Value: AutoDeployTargetGroup
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: AutoDeployALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref ProjectSubnet1
+        - !Ref ProjectSubnet2
+      SecurityGroups:
+        - !Ref ProjectSecurityGroup
+      Tags:
+        - Key: Name
+          Value: AutoDeployALB
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+
 Outputs:
   VPCId:
     Description: The ID of the VPC
@@ -466,11 +530,17 @@ Outputs:
     Export:
       Name: VpcId
 
-  SubnetId:
+  Subnet1Id:
     Description: The ID of the Subnet
-    Value: !Ref ProjectSubnet
+    Value: !Ref ProjectSubnet1
     Export:
-      Name: SubnetId
+      Name: Subnet1Id
+
+  Subnet2Id:
+    Description: The ID of the Subnet 2
+    Value: !Ref ProjectSubnet2
+    Export:
+      Name: Subnet2Id
 
   SecurityGroupId:
     Description: The ID of the Security Group
@@ -517,3 +587,9 @@ Outputs:
     Value: !Ref AutoDeployFrontendEC2Instance
     Export:
       Name: FrontendEC2InstanceId
+
+  LoadBalancerDNSName:
+    Description: DNS Name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: ALBDNSName
