@@ -16,6 +16,7 @@ This project provides a streamlined solution for deploying React and Node.js app
 - AWS Simple Notification Service (SNS)
 - AWS Simple Queue Service (SQS)
 - AWS S3
+- Application Load Balancer
 - CloudFormation
 - API Gateway
 - Docker
