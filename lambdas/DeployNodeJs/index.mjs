@@ -17,7 +17,9 @@ export const handler = async (event) => {
   
   // extract variables from environment variable
   const TopicArn = process.env.TOPIC_ARN;
-  const SubnetId = process.env.SUBNET_ID;
+  const ProjectVpc = process.env.PROJECT_VPC;
+  const Subnet1Id = process.env.SUBNET1_ID;
+  const Subnet2Id = process.env.SUBNET2_ID;
   const SecurityGroupId = process.env.SECURITY_GROUP;
   const QueueUrl = process.env.QUEUE_URL
   
@@ -79,8 +81,16 @@ export const handler = async (event) => {
     TemplateURL: `https://${bucketName}.s3.amazonaws.com/NodeBackendCloudFormation.yml`,
     Parameters: [
         {
-          ParameterKey: 'SubnetID',
-          ParameterValue: SubnetId
+          ParameterKey: 'ProjectVpc',
+          ParameterValue: ProjectVpc
+        },
+        {
+          ParameterKey: 'Subnet1ID',
+          ParameterValue: Subnet1Id
+        },
+        {
+          ParameterKey: 'Subnet2ID',
+          ParameterValue: Subnet2Id
         },
         {
           ParameterKey: 'SecurityGroupID',

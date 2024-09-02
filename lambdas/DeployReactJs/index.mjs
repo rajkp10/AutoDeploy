@@ -16,7 +16,9 @@ export const handler = async (event) => {
   
   // extract variables from environment variable
   const TopicArn = process.env.TOPIC_ARN;
-  const SubnetId = process.env.SUBNET_ID;
+  const ProjectVpc = process.env.PROJECT_VPC;
+  const Subnet1Id = process.env.SUBNET1_ID;
+  const Subnet2Id = process.env.SUBNET2_ID;
   const SecurityGroupId = process.env.SECURITY_GROUP;
   const QueueUrl = process.env.QUEUE_URL
   
@@ -31,7 +33,7 @@ export const handler = async (event) => {
   }
   
   // check evironment variables
-  if(environmentVariables.length > 0){
+  if(environmentVariables && environmentVariables.length > 0){
     environmentVariables.forEach((variable)=>{
       envFileContent += `ENV ${variable.name}=${variable.value}\n`
     });
@@ -80,8 +82,16 @@ export const handler = async (event) => {
     TemplateURL: `https://${bucketName}.s3.amazonaws.com/ReactFrontendCloudFormation.yml`,
     Parameters: [
         {
-          ParameterKey: 'SubnetID',
-          ParameterValue: SubnetId
+          ParameterKey: 'ProjectVpc',
+          ParameterValue: ProjectVpc
+        },
+        {
+          ParameterKey: 'Subnet1ID',
+          ParameterValue: Subnet1Id
+        },
+        {
+          ParameterKey: 'Subnet2ID',
+          ParameterValue: Subnet2Id
         },
         {
           ParameterKey: 'SecurityGroupID',
