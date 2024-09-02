@@ -56,7 +56,7 @@ function ViewDeployedApps() {
                   <Td>
                     <Link
                       color="teal.500"
-                      href={`http://${d.publicIp}`}
+                      href={`http://${d.loadBalancerDns}`}
                       isExternal
                     >
                       Link
